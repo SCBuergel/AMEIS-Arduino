@@ -86,6 +86,7 @@ bool parseCommand(String newCommandText)
       String textPar = newCommandText.substring(whitespaceIndex);
       //Serial.println(textPar);
       int intPar = textPar.toInt();
+      // TODO: check that this pin index is not in use internally (sensors?)
       csdtiIndices[c] = intPar;
       //Serial.println(intPar);
     } while (whitespaceIndex != -1 && c++ < csdtiIndicesCount);

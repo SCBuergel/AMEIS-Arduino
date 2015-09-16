@@ -1,3 +1,10 @@
+#include <Wire.h>
+#define POLYNOMIAL 0x131
+#include "Arduino.h"
+#define TSIC_HIGH digitalRead(m_signal_pin)
+#define TSIC_LOW  !digitalRead(m_signal_pin)
+#define Cancel()  if (timeout > 10000){Serial.println("Error occured");}       // Cancel if sensor is disconnected
+
 String inputCommand = "";          // a string to hold incoming data
 boolean commandComplete = false;   // whether the command is complete
 unsigned int clockSpeedMilliseconds = 1;
@@ -11,6 +18,22 @@ bool binaryDataAvailable = false;
 char *binaryData;
 unsigned long startTime = 0;
 unsigned long endTime = 0;
+
+//SHT31 definitions
+uint8_t bytebuffer[6];
+unsigned int temp;
+unsigned int temp1;
+unsigned int temp2;
+unsigned int hum;
+unsigned int hum1;
+unsigned int hum2;
+//TSIC716 definitions
+uint8_t signal_pin=2;
+uint8_t getTemperature(uint16_t *temp_value16);
+double calc_Celsius(uint16_t *temperature16);
+uint8_t m_signal_pin=2;
+uint8_t checkParity(uint16_t *temp_value);
+uint16_t temp_value16;
 
 bool parseCommand(String newCommandText)
 {
@@ -29,19 +52,67 @@ bool parseCommand(String newCommandText)
     Serial.println("Arduino Uno, ArduinoHandler V0.1");
   }
   else if (newCommandText.startsWith("gettemp"))
-  {
-    double temp = 123.4567;    // TODO: read temperature from temperature sensor
-    Serial.println(temp, 4);   // write temperature with 4 significant digitis
+  { // read temperature from temperature sensor
+    uint16_t temp_value1 = 0;
+    uint16_t temp_value2 = 0;
+    getTemperature(&temp_value1);
+    getTemperature(&temp_value2);
+    checkParity(&temp_value1);
+    checkParity(&temp_value2);
+    temp_value16 = (temp_value1 << 8) + temp_value2;
+    Serial.println(calc_Celsius(&temp_value16), 4);   // write temperature with 4 significant digitis
   }
   else if (newCommandText.startsWith("gethumid"))
-  {
-    double humid = 123.4567;    // TODO: read humidity from humidity sensor
-    Serial.println(humid, 4);   // write humidity with 4 significant digitis
+  { // read humidity from humidity sensor
+    Wire.beginTransmission(68); //0x44 (default adress) ADDR connected to VSS
+    Wire.write(byte(0x2C));
+    Wire.write(byte(0x06));
+    Wire.endTransmission();
+    int i=1;
+    Wire.requestFrom(68, 6);
+    while(Wire.available())
+    { 
+      bytebuffer[i]=Wire.read();
+      i++;
+    }
+    temp1=bytebuffer[1]<<8;
+    temp2=bytebuffer[2];
+    uint8_t tempcrc[]={bytebuffer[1], bytebuffer[2]};
+    int crc=SHT3X_CalcCrc(tempcrc,2);
+    //Serial.print(" CRC:   crc calculated: ");Serial.print(crc); Serial.print("   crc received: "); Serial.println(bytebuffer[3]);
+    hum1=bytebuffer[4]<<8;
+    hum2=bytebuffer[5];
+    temp=temp1 + temp2;
+    hum=hum1 + hum2;
+    double tempd=(double)temp;
+    double humd=(double)hum;
+    Serial.println(100*humd/(pow(2,16)-1), 4);   // write humidity with 4 significant digitis
   }
   else if (newCommandText.startsWith("gethumidtemp"))
-  {
-    double temp = 123.4567;    // TODO: read temperature from humidity sensor
-    Serial.println(temp, 4);   // write temperature with 4 significant digitis
+  { // read temperature from humidity sensor
+    Wire.beginTransmission(68); //0x44 (default adress) ADDR connected to VSS
+    Wire.write(byte(0x2C));
+    Wire.write(byte(0x06));
+    Wire.endTransmission();
+    int i=1;
+    Wire.requestFrom(68, 6);
+    while(Wire.available())
+    { 
+      bytebuffer[i]=Wire.read();
+      i++;
+    }
+    temp1=bytebuffer[1]<<8;
+    temp2=bytebuffer[2];
+    uint8_t tempcrc[]={bytebuffer[1], bytebuffer[2]};
+    int crc=SHT3X_CalcCrc(tempcrc,2);
+    //Serial.print(" CRC:   crc calculated: ");Serial.print(crc); Serial.print("   crc received: "); Serial.println(bytebuffer[3]);
+    hum1=bytebuffer[4]<<8;
+    hum2=bytebuffer[5];
+    temp=temp1 + temp2;
+    hum=hum1 + hum2;
+    double tempd=(double)temp;
+   double humd=(double)hum;
+    Serial.println(-45 + 175*tempd/(pow(2,16)-1), 4);   // write temperature with 4 significant digitis
   }
   else if (newCommandText.startsWith("setclockspeed"))
   {  // "setClockSpeed 10" is setting the clock (of the output data) to 10 microseconds 
@@ -120,6 +191,8 @@ void setup()
   {  // set all required pins to output mode
     pinMode(csdtiIndices[c], OUTPUT);
   }
+  Wire.begin();
+  pinMode(m_signal_pin, INPUT);
 }
 
 // send blink sequence indinputCommandating that right firmware is running
@@ -177,6 +250,117 @@ void processBinaryData()
     //Serial.println(chunk);
     //Serial.println(output);
   }
+}
+
+//Calc Checksum for SHT31
+static uint8_t SHT3X_CalcCrc(uint8_t data[], uint8_t nbrOfBytes)
+{
+   uint8_t bitmask; // bit mask
+   uint8_t crc = 0xFF; // calculated checksum
+   uint8_t byteCtr; // byte counter
+
+   // calculates 8-Bit checksum with given polynomial
+   for(byteCtr = 0; byteCtr < nbrOfBytes; byteCtr++)
+   {
+     crc ^= (data[byteCtr]);
+     for(bitmask = 8; bitmask > 0; --bitmask)
+     {
+       if(crc & 0x80)
+         crc = (crc << 1) ^ POLYNOMIAL;
+       else crc = (crc << 1);
+     }
+   }
+   return crc;
+}
+
+//Calculate temperature in Celsius for TSIC716
+double calc_Celsius(uint16_t *temperature16)
+{
+  double temp_val16=*temperature16;
+  double celsius=0;
+  //temp_val16=((*temperature16 * 250L) >> 8) - 500; 
+  celsius=temp_val16/16383*70-10;
+  return celsius;
+}
+
+//Get temperature of TSIC716
+uint8_t getTemperature(uint16_t *temp_value)
+{
+  uint16_t strobelength = 0;
+  uint16_t strobetemp = 0;
+  uint8_t dummy = 0;
+  uint16_t timeout = 0; // max value for timeout is set in .h file
+  while (TSIC_HIGH)
+  {  // wait until start bit starts
+    timeout++;
+    delayMicroseconds(10);
+    Cancel();
+  }
+  
+  strobelength = 0;
+  timeout = 9900;   // max value for timeout is set in .h file
+  while (TSIC_LOW)
+  {    // wait for rising edge
+    strobelength++;
+    timeout++;
+    delayMicroseconds(10);
+    Cancel();
+  }
+  for (uint8_t i=0; i<9; i++)
+  {
+    // Wait for bit start
+    timeout = 0;
+    while (TSIC_HIGH)
+    { // wait for falling edge
+      timeout++;
+      Cancel();
+    }
+    // Delay strobe length
+    timeout = 0;
+    dummy = 0;
+    strobetemp = strobelength;
+    while (strobetemp--)
+    {
+      timeout++;
+      dummy++;
+      delayMicroseconds(10);
+      Cancel();
+    }
+    *temp_value <<= 1;
+    // Read bit
+    if (TSIC_HIGH)
+    {
+      *temp_value |= 1;
+    }
+    // Wait for bit end
+    timeout = 0;
+    while (TSIC_LOW)
+    {    // wait for rising edge
+      timeout++;
+      Cancel();
+    }
+  }
+  
+  return 1;
+}
+
+//check parity of TSIC716
+uint8_t checkParity(uint16_t *temp_value)
+{
+  uint8_t parity = 0;
+
+  for (uint8_t i = 0; i < 9; i++)
+  {
+    if (*temp_value & (1 << i))
+      parity++;
+  }
+  if (parity % 2)
+  {
+    Serial.println("Error: wrong parity");       // wrong parity
+    return 0;
+  }
+  *temp_value >>= 1;          // delete parity bit
+  return 1;
 }
 
 void loop()

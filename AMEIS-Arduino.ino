@@ -3,7 +3,7 @@
 #include "Arduino.h"
 #define TSIC_HIGH digitalRead(m_signal_pin)
 #define TSIC_LOW  !digitalRead(m_signal_pin)
-#define Cancel()  if (timeout > 10000){Serial.println("Error occured");}       // Cancel if sensor is disconnected
+#define timeoutMicroSeconds 10000
 
 String inputCommand = "";          // a string to hold incoming data
 boolean commandComplete = false;   // whether the command is complete
@@ -86,9 +86,15 @@ bool parseCommand(String newCommandText)
     hum=hum1 + hum2;
     double tempd=(double)temp;
     double humd=(double)hum;
-    Serial.println(100*humd/(pow(2,16)-1), 4);   // write humidity with 4 significant digitis
+    double humidityPercent = 100*humd/(pow(2,16)-1);
+    if (humidityPercent < 0.1)
+    {  // for debugging without the actual hardware: if we didnt receive anything, set a small random number
+      long randNumber = random(10000);
+      humidityPercent = (double)randNumber / 10000.0;
+    }
+    Serial.println(humidityPercent, 4);   // write humidity with 4 significant digitis
   }
-  else if (newCommandText.startsWith("gethumidtemp"))
+  else if (newCommandText.startsWith("gethtemp"))
   { // read temperature from humidity sensor
     Wire.beginTransmission(68); //0x44 (default adress) ADDR connected to VSS
     Wire.write(byte(0x2C));
@@ -294,7 +300,11 @@ uint8_t getTemperature(uint16_t *temp_value)
   {  // wait until start bit starts
     timeout++;
     delayMicroseconds(10);
-    Cancel();
+    if (timeout > timeoutMicroSeconds/10)
+    {
+      Serial.println("Error occured");
+      return 0;
+    }
   }
   
   strobelength = 0;
@@ -304,7 +314,11 @@ uint8_t getTemperature(uint16_t *temp_value)
     strobelength++;
     timeout++;
     delayMicroseconds(10);
-    Cancel();
+    if (timeout > timeoutMicroSeconds/10)
+    {
+      Serial.println("Error occured");
+      return 0;
+    }
   }
   for (uint8_t i=0; i<9; i++)
   {
@@ -313,7 +327,11 @@ uint8_t getTemperature(uint16_t *temp_value)
     while (TSIC_HIGH)
     { // wait for falling edge
       timeout++;
-      Cancel();
+      if (timeout > timeoutMicroSeconds/10)
+      {
+        Serial.println("Error occured");
+        return 0;
+      }
     }
     // Delay strobe length
     timeout = 0;
@@ -324,7 +342,11 @@ uint8_t getTemperature(uint16_t *temp_value)
       timeout++;
       dummy++;
       delayMicroseconds(10);
-      Cancel();
+      if (timeout > timeoutMicroSeconds/10)
+      {
+        Serial.println("Error occured");
+        return 0;
+      }
     }
     *temp_value <<= 1;
     // Read bit
@@ -337,7 +359,11 @@ uint8_t getTemperature(uint16_t *temp_value)
     while (TSIC_LOW)
     {    // wait for rising edge
       timeout++;
-      Cancel();
+      if (timeout > timeoutMicroSeconds/10)
+      {
+        Serial.println("Error occured");
+        return 0;
+      }
     }
   }
   

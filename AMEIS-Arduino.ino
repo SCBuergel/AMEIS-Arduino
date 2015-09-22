@@ -3,12 +3,12 @@
 #include "Arduino.h"
 #define TSIC_HIGH digitalRead(m_signal_pin)
 #define TSIC_LOW  !digitalRead(m_signal_pin)
-#define timeoutMicroSeconds 10000
+#define timeoutMicroSeconds 1000000
 
 String inputCommand = "";          // a string to hold incoming data
 boolean commandComplete = false;   // whether the command is complete
 unsigned int clockSpeedMilliseconds = 1;
-int csdtiIndices[] = {5, 4, 7, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};  // output pins for clock, sync, din, tilt, chamberIndex1, chamberIndex2, ..., chamberIndexN
+int csdtiIndices[] = {5, 4, 7, 100, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};  // output pins for clock, sync, din, tilt, chamberIndex1, chamberIndex2, ..., chamberIndexN
 int csdtiIndicesCount = 11;        // number of items in csdrti array
 int bytesPerChunk = 0;
 int numberOfChunks = 0;
@@ -28,7 +28,6 @@ unsigned int hum;
 unsigned int hum1;
 unsigned int hum2;
 //TSIC716 definitions
-uint8_t signal_pin=2;
 uint8_t getTemperature(uint16_t *temp_value16);
 double calc_Celsius(uint16_t *temperature16);
 uint8_t m_signal_pin=2;
@@ -46,6 +45,14 @@ bool parseCommand(String newCommandText)
     digitalWrite(13, LOW);
     Serial.println("Info: Executed test.");
     return true;
+  }
+  else if (newCommandText.startsWith("debug"))
+  {
+    Serial.println(digitalRead(m_signal_pin));
+    pinMode(m_signal_pin, OUTPUT);
+    digitalWrite(m_signal_pin, LOW);
+    pinMode(m_signal_pin, INPUT);
+    Serial.println(digitalRead(m_signal_pin));
   }
   else if (newCommandText.startsWith("getversion"))
   {
@@ -117,7 +124,7 @@ bool parseCommand(String newCommandText)
     temp=temp1 + temp2;
     hum=hum1 + hum2;
     double tempd=(double)temp;
-   double humd=(double)hum;
+    double humd=(double)hum;
     Serial.println(-45 + 175*tempd/(pow(2,16)-1), 4);   // write temperature with 4 significant digitis
   }
   else if (newCommandText.startsWith("setclockspeed"))
@@ -174,7 +181,10 @@ bool parseCommand(String newCommandText)
     for (c = 0; c < numPins; c++)
     {
       confMsg += String(c) + ":" + String(csdtiIndices[c]) + ", ";
-      pinMode(csdtiIndices[c], OUTPUT);
+      if (csdtiIndices[c] < 100)
+      {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
+        pinMode(csdtiIndices[c], OUTPUT);
+      }
     }
     Serial.println("Set  " + String(numPins) + " pins as output: " + confMsg + ".");
   }
@@ -195,7 +205,8 @@ void setup()
   sendStartBlinkSequence();
   for (int c = 0; c < csdtiIndicesCount; c++)
   {  // set all required pins to output mode
-    pinMode(csdtiIndices[c], OUTPUT);
+    if (csdtiIndices[c] < 100) // >= 100 encodes analog pins
+      pinMode(csdtiIndices[c], OUTPUT);
   }
   Wire.begin();
   pinMode(m_signal_pin, INPUT);
@@ -233,7 +244,30 @@ void processBinaryData()
           //output += String(curIIndex) + ":1 ";
           
           // apply to corresponding output (clock, sync, din, tilt, countS
-          digitalWrite(csdtiIndices[curIIndex], HIGH);
+          switch (csdtiIndices[curIIndex])
+          {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
+            case 100:
+              analogWrite(A0, 255);
+              break;
+            case 101:
+              analogWrite(A1, 255);
+              break;
+            case 102:
+              analogWrite(A2, 255);
+              break;
+            case 103:
+              analogWrite(A3, 255);
+              break;
+            case 104:
+              analogWrite(A4, 255);
+              break;
+            case 105:
+              analogWrite(A5, 255);
+              break;
+            default:
+              digitalWrite(csdtiIndices[curIIndex], HIGH);
+          }
+          
           if (bitIndex == 0)
           {
             digitalWrite(13, HIGH);
@@ -243,7 +277,29 @@ void processBinaryData()
         else
         {
           output += String(curIIndex) + ":0 ";
-          digitalWrite(csdtiIndices[curIIndex], LOW);
+          switch (csdtiIndices[curIIndex])
+          {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
+            case 100:
+              analogWrite(A0, 0);
+              break;
+            case 101:
+              analogWrite(A1, 0);
+              break;
+            case 102:
+              analogWrite(A2, 0);
+              break;
+            case 103:
+              analogWrite(A3, 0);
+              break;
+            case 104:
+              analogWrite(A4, 0);
+              break;
+            case 105:
+              analogWrite(A5, 0);
+              break;
+            default:
+              digitalWrite(csdtiIndices[curIIndex], LOW);
+          }
           if (bitIndex == 0)
           {
             digitalWrite(13, LOW);
@@ -302,7 +358,8 @@ uint8_t getTemperature(uint16_t *temp_value)
     delayMicroseconds(10);
     if (timeout > timeoutMicroSeconds/10)
     {
-      Serial.println("Error occured");
+      Serial.println(timeout);
+      Serial.println("Error occured (1)");
       return 0;
     }
   }

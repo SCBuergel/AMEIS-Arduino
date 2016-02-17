@@ -7,6 +7,7 @@ int bytesPerChunk = 0;
 int numberOfChunks = 0;
 bool currentlyBinaryMode = false;
 int binaryByteCount = 0;
+int resetIndex = -1;    // -1 = no reset pin, otherwise indicates the reset pin that is always pulled up
 bool binaryDataAvailable = false;
 char *binaryData;
 unsigned long startTime = 0;
@@ -37,6 +38,20 @@ bool parseCommand(String newCommandText)
     clockSpeedMilliseconds = intPar;
     Serial.println("Set clockspeed to " + String(clockSpeedMilliseconds) + " milliseconds.");
   }
+  else if (newCommandText.startsWith("setreset"))
+  {  // "setreset 2" is setting the inverted reset pin (pin which is always held high) to pin number 2. Setting a value of -1 is deactivating any reset pins (hard-wired to pull high)
+    int whitespaceIndex = newCommandText.indexOf(" ");
+    String textPar = newCommandText.substring(whitespaceIndex);
+    Serial.println(sizeof(int));
+    int intPar = textPar.toInt();
+    resetIndex = intPar;
+    if (resetIndex > 0)
+    {  // ignore if we disabled the output (e.g. value of -1)
+      pinMode(resetIndex, OUTPUT);
+      digitalWrite(resetIndex, HIGH);
+    }
+    Serial.println("Set reset pin to " + String(resetIndex) + ".");
+  }
   else if (newCommandText.startsWith("setbitsperchunk"))
   {  // "setBitsPerChunk 11" is setting the number of bits read from a bit sequence to 11, i.e.: clock, sync, data, tilt + 7 bits for encoding the chamber index
     int whitespaceIndex = newCommandText.indexOf(" ");
@@ -48,7 +63,7 @@ bool parseCommand(String newCommandText)
     {
       csdtiIndicesCount = 16;
     }
-    Serial.println("Set setbitsperchunk to " + String(clockSpeedMilliseconds) + " bit.");
+    Serial.println("Set setbitsperchunk to " + String(csdtiIndicesCount) + " bit.");
   }
   else if (newCommandText.startsWith("setpins"))
   { /* "setpins 5 4 7 2 8 9 10 11 12" is setting the following Arduino pins as outputs:
@@ -121,6 +136,7 @@ void sendStartBlinkSequence()
 
 void processBinaryData()
 {  // processes binary data and sends them to the specified output pins
+  digitalWrite(resetIndex, HIGH);
   for (int chunk = 0; chunk < numberOfChunks; chunk++)
   {
     String output = "";
@@ -218,12 +234,7 @@ void serialEvent()
     }
     else
     {
-      // if we are in binary mode 
-      //bytesPerChunk = 0;
-      //numberOfChunks = 0;
-      //currentlyBinaryMode = false;
-
-      // append binary data
+      // if we are in binary mode append binary data
       binaryData[binaryByteCount] = (byte)inChar;
       //Serial.println(String((int)binaryData[binaryByteCount]));
       //Serial.println(numberOfChunks * bytesPerChunk);

@@ -1,38 +1,17 @@
-#include <Wire.h>
-#define POLYNOMIAL 0x131
-#include "Arduino.h"
-#define TSIC_HIGH digitalRead(m_signal_pin)
-#define TSIC_LOW  !digitalRead(m_signal_pin)
-#define timeoutMicroSeconds 1000000
-
 String inputCommand = "";          // a string to hold incoming data
 boolean commandComplete = false;   // whether the command is complete
 unsigned int clockSpeedMilliseconds = 1;
-int csdtiIndices[] = {5, 4, 7, 100, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};  // output pins for clock, sync, din, tilt, chamberIndex1, chamberIndex2, ..., chamberIndexN
-int csdtiIndicesCount = 11;        // number of items in csdrti array
+int csdtiIndices[] = {5, 4, 7, 2, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20};  // output pins for clock, sync, din, tilt, chamberIndex1, chamberIndex2, ..., chamberIndexN
+int csdtiIndicesCount = 16;        // number of items in csdrti array
 int bytesPerChunk = 0;
 int numberOfChunks = 0;
 bool currentlyBinaryMode = false;
 int binaryByteCount = 0;
+int resetIndex = -1;    // -1 = no reset pin, otherwise indicates the reset pin that is always pulled up
 bool binaryDataAvailable = false;
 char *binaryData;
 unsigned long startTime = 0;
 unsigned long endTime = 0;
-
-//SHT31 definitions
-uint8_t bytebuffer[6];
-unsigned int temp;
-unsigned int temp1;
-unsigned int temp2;
-unsigned int hum;
-unsigned int hum1;
-unsigned int hum2;
-//TSIC716 definitions
-uint8_t getTemperature(uint16_t *temp_value16);
-double calc_Celsius(uint16_t *temperature16);
-uint8_t m_signal_pin=2;
-uint8_t checkParity(uint16_t *temp_value);
-uint16_t temp_value16;
 
 bool parseCommand(String newCommandText)
 {
@@ -46,86 +25,9 @@ bool parseCommand(String newCommandText)
     Serial.println("Info: Executed test.");
     return true;
   }
-  else if (newCommandText.startsWith("debug"))
-  {
-    Serial.println(digitalRead(m_signal_pin));
-    pinMode(m_signal_pin, OUTPUT);
-    digitalWrite(m_signal_pin, LOW);
-    pinMode(m_signal_pin, INPUT);
-    Serial.println(digitalRead(m_signal_pin));
-  }
   else if (newCommandText.startsWith("getversion"))
   {
     Serial.println("Arduino Uno, ArduinoHandler V0.1");
-  }
-  else if (newCommandText.startsWith("gettemp"))
-  { // read temperature from temperature sensor
-    uint16_t temp_value1 = 0;
-    uint16_t temp_value2 = 0;
-    getTemperature(&temp_value1);
-    getTemperature(&temp_value2);
-    checkParity(&temp_value1);
-    checkParity(&temp_value2);
-    temp_value16 = (temp_value1 << 8) + temp_value2;
-    Serial.println(calc_Celsius(&temp_value16), 4);   // write temperature with 4 significant digitis
-  }
-  else if (newCommandText.startsWith("gethumid"))
-  { // read humidity from humidity sensor
-    Wire.beginTransmission(68); //0x44 (default adress) ADDR connected to VSS
-    Wire.write(byte(0x2C));
-    Wire.write(byte(0x06));
-    Wire.endTransmission();
-    int i=1;
-    Wire.requestFrom(68, 6);
-    while(Wire.available())
-    { 
-      bytebuffer[i]=Wire.read();
-      i++;
-    }
-    temp1=bytebuffer[1]<<8;
-    temp2=bytebuffer[2];
-    uint8_t tempcrc[]={bytebuffer[1], bytebuffer[2]};
-    int crc=SHT3X_CalcCrc(tempcrc,2);
-    //Serial.print(" CRC:   crc calculated: ");Serial.print(crc); Serial.print("   crc received: "); Serial.println(bytebuffer[3]);
-    hum1=bytebuffer[4]<<8;
-    hum2=bytebuffer[5];
-    temp=temp1 + temp2;
-    hum=hum1 + hum2;
-    double tempd=(double)temp;
-    double humd=(double)hum;
-    double humidityPercent = 100*humd/(pow(2,16)-1);
-    if (humidityPercent < 0.1)
-    {  // for debugging without the actual hardware: if we didnt receive anything, set a small random number
-      long randNumber = random(10000);
-      humidityPercent = (double)randNumber / 10000.0;
-    }
-    Serial.println(humidityPercent, 4);   // write humidity with 4 significant digitis
-  }
-  else if (newCommandText.startsWith("gethtemp"))
-  { // read temperature from humidity sensor
-    Wire.beginTransmission(68); //0x44 (default adress) ADDR connected to VSS
-    Wire.write(byte(0x2C));
-    Wire.write(byte(0x06));
-    Wire.endTransmission();
-    int i=1;
-    Wire.requestFrom(68, 6);
-    while(Wire.available())
-    { 
-      bytebuffer[i]=Wire.read();
-      i++;
-    }
-    temp1=bytebuffer[1]<<8;
-    temp2=bytebuffer[2];
-    uint8_t tempcrc[]={bytebuffer[1], bytebuffer[2]};
-    int crc=SHT3X_CalcCrc(tempcrc,2);
-    //Serial.print(" CRC:   crc calculated: ");Serial.print(crc); Serial.print("   crc received: "); Serial.println(bytebuffer[3]);
-    hum1=bytebuffer[4]<<8;
-    hum2=bytebuffer[5];
-    temp=temp1 + temp2;
-    hum=hum1 + hum2;
-    double tempd=(double)temp;
-    double humd=(double)hum;
-    Serial.println(-45 + 175*tempd/(pow(2,16)-1), 4);   // write temperature with 4 significant digitis
   }
   else if (newCommandText.startsWith("setclockspeed"))
   {  // "setClockSpeed 10" is setting the clock (of the output data) to 10 microseconds 
@@ -135,6 +37,20 @@ bool parseCommand(String newCommandText)
     int intPar = textPar.toInt();
     clockSpeedMilliseconds = intPar;
     Serial.println("Set clockspeed to " + String(clockSpeedMilliseconds) + " milliseconds.");
+  }
+  else if (newCommandText.startsWith("setreset"))
+  {  // "setreset 2" is setting the inverted reset pin (pin which is always held high) to pin number 2. Setting a value of -1 is deactivating any reset pins (hard-wired to pull high)
+    int whitespaceIndex = newCommandText.indexOf(" ");
+    String textPar = newCommandText.substring(whitespaceIndex);
+    Serial.println(sizeof(int));
+    int intPar = textPar.toInt();
+    resetIndex = intPar;
+    if (resetIndex > 0)
+    {  // ignore if we disabled the output (e.g. value of -1)
+      pinMode(resetIndex, OUTPUT);
+      digitalWrite(resetIndex, HIGH);
+    }
+    Serial.println("Set reset pin to " + String(resetIndex) + ".");
   }
   else if (newCommandText.startsWith("setbitsperchunk"))
   {  // "setBitsPerChunk 11" is setting the number of bits read from a bit sequence to 11, i.e.: clock, sync, data, tilt + 7 bits for encoding the chamber index
@@ -147,7 +63,7 @@ bool parseCommand(String newCommandText)
     {
       csdtiIndicesCount = 16;
     }
-    Serial.println("Set setbitsperchunk to " + String(clockSpeedMilliseconds) + " bit.");
+    Serial.println("Set setbitsperchunk to " + String(csdtiIndicesCount) + " bit.");
   }
   else if (newCommandText.startsWith("setpins"))
   { /* "setpins 5 4 7 2 8 9 10 11 12" is setting the following Arduino pins as outputs:
@@ -170,7 +86,6 @@ bool parseCommand(String newCommandText)
       String textPar = newCommandText.substring(whitespaceIndex);
       //Serial.println(textPar);
       int intPar = textPar.toInt();
-      // TODO: check that this pin index is not in use internally (sensors?)
       csdtiIndices[c] = intPar;
       //Serial.println(intPar);
     } while (whitespaceIndex != -1 && c++ < csdtiIndicesCount);
@@ -181,10 +96,7 @@ bool parseCommand(String newCommandText)
     for (c = 0; c < numPins; c++)
     {
       confMsg += String(c) + ":" + String(csdtiIndices[c]) + ", ";
-      if (csdtiIndices[c] < 100)
-      {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
-        pinMode(csdtiIndices[c], OUTPUT);
-      }
+      pinMode(csdtiIndices[c], OUTPUT);
     }
     Serial.println("Set  " + String(numPins) + " pins as output: " + confMsg + ".");
   }
@@ -205,11 +117,8 @@ void setup()
   sendStartBlinkSequence();
   for (int c = 0; c < csdtiIndicesCount; c++)
   {  // set all required pins to output mode
-    if (csdtiIndices[c] < 100) // >= 100 encodes analog pins
-      pinMode(csdtiIndices[c], OUTPUT);
+    pinMode(csdtiIndices[c], OUTPUT);
   }
-  Wire.begin();
-  pinMode(m_signal_pin, INPUT);
 }
 
 // send blink sequence indinputCommandating that right firmware is running
@@ -227,6 +136,7 @@ void sendStartBlinkSequence()
 
 void processBinaryData()
 {  // processes binary data and sends them to the specified output pins
+  digitalWrite(resetIndex, HIGH);
   for (int chunk = 0; chunk < numberOfChunks; chunk++)
   {
     String output = "";
@@ -244,30 +154,7 @@ void processBinaryData()
           //output += String(curIIndex) + ":1 ";
           
           // apply to corresponding output (clock, sync, din, tilt, countS
-          switch (csdtiIndices[curIIndex])
-          {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
-            case 100:
-              analogWrite(A0, 255);
-              break;
-            case 101:
-              analogWrite(A1, 255);
-              break;
-            case 102:
-              analogWrite(A2, 255);
-              break;
-            case 103:
-              analogWrite(A3, 255);
-              break;
-            case 104:
-              analogWrite(A4, 255);
-              break;
-            case 105:
-              analogWrite(A5, 255);
-              break;
-            default:
-              digitalWrite(csdtiIndices[curIIndex], HIGH);
-          }
-          
+          digitalWrite(csdtiIndices[curIIndex], HIGH);
           if (bitIndex == 0)
           {
             digitalWrite(13, HIGH);
@@ -277,29 +164,7 @@ void processBinaryData()
         else
         {
           output += String(curIIndex) + ":0 ";
-          switch (csdtiIndices[curIIndex])
-          {  // >= 100 encodes for analog i/o, therefore we dont need to initilize it
-            case 100:
-              analogWrite(A0, 0);
-              break;
-            case 101:
-              analogWrite(A1, 0);
-              break;
-            case 102:
-              analogWrite(A2, 0);
-              break;
-            case 103:
-              analogWrite(A3, 0);
-              break;
-            case 104:
-              analogWrite(A4, 0);
-              break;
-            case 105:
-              analogWrite(A5, 0);
-              break;
-            default:
-              digitalWrite(csdtiIndices[curIIndex], LOW);
-          }
+          digitalWrite(csdtiIndices[curIIndex], LOW);
           if (bitIndex == 0)
           {
             digitalWrite(13, LOW);
@@ -312,138 +177,6 @@ void processBinaryData()
     //Serial.println(chunk);
     //Serial.println(output);
   }
-}
-
-//Calc Checksum for SHT31
-static uint8_t SHT3X_CalcCrc(uint8_t data[], uint8_t nbrOfBytes)
-{
-   uint8_t bitmask; // bit mask
-   uint8_t crc = 0xFF; // calculated checksum
-   uint8_t byteCtr; // byte counter
-
-   // calculates 8-Bit checksum with given polynomial
-   for(byteCtr = 0; byteCtr < nbrOfBytes; byteCtr++)
-   {
-     crc ^= (data[byteCtr]);
-     for(bitmask = 8; bitmask > 0; --bitmask)
-     {
-       if(crc & 0x80)
-         crc = (crc << 1) ^ POLYNOMIAL;
-       else crc = (crc << 1);
-     }
-   }
-   return crc;
-}
-
-//Calculate temperature in Celsius for TSIC716
-double calc_Celsius(uint16_t *temperature16)
-{
-  double temp_val16=*temperature16;
-  double celsius=0;
-  //temp_val16=((*temperature16 * 250L) >> 8) - 500; 
-  celsius=temp_val16/16383*70-10;
-  return celsius;
-}
-
-//Get temperature of TSIC716
-uint8_t getTemperature(uint16_t *temp_value)
-{
-  uint16_t strobelength = 0;
-  uint16_t strobetemp = 0;
-  uint8_t dummy = 0;
-  uint16_t timeout = 0; // max value for timeout is set in .h file
-  while (TSIC_HIGH)
-  {  // wait until start bit starts
-    timeout++;
-    delayMicroseconds(10);
-    if (timeout > timeoutMicroSeconds/10)
-    {
-      Serial.println(timeout);
-      Serial.println("Error occured (1)");
-      return 0;
-    }
-  }
-  
-  strobelength = 0;
-  timeout = 9900;   // max value for timeout is set in .h file
-  while (TSIC_LOW)
-  {    // wait for rising edge
-    strobelength++;
-    timeout++;
-    delayMicroseconds(10);
-    if (timeout > timeoutMicroSeconds/10)
-    {
-      Serial.println("Error occured");
-      return 0;
-    }
-  }
-  for (uint8_t i=0; i<9; i++)
-  {
-    // Wait for bit start
-    timeout = 0;
-    while (TSIC_HIGH)
-    { // wait for falling edge
-      timeout++;
-      if (timeout > timeoutMicroSeconds/10)
-      {
-        Serial.println("Error occured");
-        return 0;
-      }
-    }
-    // Delay strobe length
-    timeout = 0;
-    dummy = 0;
-    strobetemp = strobelength;
-    while (strobetemp--)
-    {
-      timeout++;
-      dummy++;
-      delayMicroseconds(10);
-      if (timeout > timeoutMicroSeconds/10)
-      {
-        Serial.println("Error occured");
-        return 0;
-      }
-    }
-    *temp_value <<= 1;
-    // Read bit
-    if (TSIC_HIGH)
-    {
-      *temp_value |= 1;
-    }
-    // Wait for bit end
-    timeout = 0;
-    while (TSIC_LOW)
-    {    // wait for rising edge
-      timeout++;
-      if (timeout > timeoutMicroSeconds/10)
-      {
-        Serial.println("Error occured");
-        return 0;
-      }
-    }
-  }
-  
-  return 1;
-}
-
-//check parity of TSIC716
-uint8_t checkParity(uint16_t *temp_value)
-{
-  uint8_t parity = 0;
-
-  for (uint8_t i = 0; i < 9; i++)
-  {
-    if (*temp_value & (1 << i))
-      parity++;
-  }
-  if (parity % 2)
-  {
-    Serial.println("Error: wrong parity");       // wrong parity
-    return 0;
-  }
-  *temp_value >>= 1;          // delete parity bit
-  return 1;
 }
 
 void loop()
@@ -501,12 +234,7 @@ void serialEvent()
     }
     else
     {
-      // if we are in binary mode 
-      //bytesPerChunk = 0;
-      //numberOfChunks = 0;
-      //currentlyBinaryMode = false;
-
-      // append binary data
+      // if we are in binary mode append binary data
       binaryData[binaryByteCount] = (byte)inChar;
       //Serial.println(String((int)binaryData[binaryByteCount]));
       //Serial.println(numberOfChunks * bytesPerChunk);
